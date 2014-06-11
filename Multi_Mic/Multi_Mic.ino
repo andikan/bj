@@ -2,7 +2,7 @@ int s0 = 10;
 int s1 = 9;
 int s2 = 8;
 
-int mapping[4] = {0, 1, 5, 7};
+int mapping[4] = {0, 5, 1, 7};
 
 void setup(){
   Serial.begin(57600);

@@ -16,6 +16,8 @@ Serial serialPort;
 String inputString = null;
 int lf = 10;    // Linefeed in ASCII
 
+Serial bluetoothSerialPort;
+
 int MIC_NUM = 4;
 Minim minim;
 AudioInput in;
@@ -43,6 +45,16 @@ int spectrum_width = 512; // determines how much of spectrum we see
 int legend_width = 40;
 int devide_space = 50;
 
+// sensing data
+float[] averagePeaks;
+float[] activeChannels;
+IntList channelWindow;
+int activeThreshold = 18;
+int directionTime;
+int directionThresholdTime = 500;
+int swipeTime;
+int swipeThresholdTime = 1000;
+
 void setup()
 {
   size((legend_width+spectrum_width)*2+devide_space, (spectrum_height+legend_height)*2+devide_space, P2D);
@@ -67,11 +79,22 @@ void setup()
   // initialize data buffers for multiple microphones
   dataBuffers = new float[MIC_NUM][in.bufferSize()];
 
+  // sensing data
+  averagePeaks = new float[MIC_NUM];
+  activeChannels = new float[MIC_NUM];
+  channelWindow = new IntList();
+
   // read data from arduino
-  serialPort = new Serial(this, "/dev/tty.usbmodem1411", 57600);
+  serialPort = new Serial(this, "/dev/tty.usbmodem1421", 57600);
   serialPort.clear();
   inputString = serialPort.readStringUntil(lf);
   inputString = null;
+
+  bluetoothSerialPort = new Serial(this, "/dev/tty.Bluetooth-Serial-1", 57600);
+
+  // timer
+  directionTime = millis();
+  swipeTime = millis();
 }
 
 
@@ -89,12 +112,12 @@ void draw()
         int channel = Integer.valueOf(inStringArray[1].substring(0, inStringArray[1].length()-1));
 
         if(actionCode.equals("s")){
-          println("action: ", actionCode);
+          // println("action: ", actionCode);
           dataMode = false;
           currentChannel = channel;
         }
         else if(actionCode.equals("e")){
-          println("action: ", actionCode);
+          // println("action: ", actionCode);
           dataMode = true;
           currentChannel = channel;
         }
@@ -107,7 +130,7 @@ void draw()
 
   // get data
   if(dataMode) {
-    println("current channel: ", currentChannel);
+    // println("current channel: ", currentChannel);
     getDataFromAudioInout(currentChannel);
   }
 
@@ -124,6 +147,91 @@ void draw()
     drawFrequencyAxis(micNum);
     drawLevelAxis(micNum);
   }
+
+  activeChannels = new float[] {-1, -1, -1, -1};
+  // collect sensing info
+  for(int micNum = 0; micNum < MIC_NUM; micNum++) {
+    if(averagePeaks[micNum] > activeThreshold) {
+      activeChannels[micNum] = averagePeaks[micNum];
+    }
+  }
+
+  int activeNum = activeChannelCount();
+  if(activeNum > 0){
+    if(activeNum == 1) { // four direction
+      int activeChannel = 0;
+      if(activeChannels[0] > -1){
+        activeChannel = 0;
+      }
+      if(activeChannels[1] > -1){
+        activeChannel = 1;
+      }
+      if(activeChannels[2] > -1){
+        activeChannel = 2;
+      }
+      if(activeChannels[3] > -1){
+        activeChannel = 3;
+      }
+
+      int passedTime = millis() - directionTime;
+      if(passedTime > directionThresholdTime) {
+        switch (activeChannel) {
+          case 0:
+            bluetoothSerialPort.write("up");
+            break;
+          case 1:
+            bluetoothSerialPort.write("right");
+            break;
+          case 2:
+            bluetoothSerialPort.write("left");
+            break;
+          case 3:
+            bluetoothSerialPort.write("down");
+            break;
+          default:
+            break;
+        }
+        directionTime = millis();
+      }
+
+      channelWindow.append(activeChannel);
+      if(channelWindow.size() == 1) {
+        swipeTime = millis();
+      }
+      else if(channelWindow.size() == 2 ) {
+        if(channelWindow.get(0) != channelWindow.get(1)) {
+
+          if(channelWindow.get(0) == 0 && channelWindow.get(1) == 2) {
+            bluetoothSerialPort.write("swipe_down");
+          }
+          else if(channelWindow.get(0) == 2 && channelWindow.get(1) == 0) {
+            bluetoothSerialPort.write("swipe_up");
+          }
+          else if(channelWindow.get(0) == 2 && channelWindow.get(1) == 3) {
+            bluetoothSerialPort.write("swipe_right");
+          }
+          else if(channelWindow.get(0) == 3 && channelWindow.get(1) == 2) {
+            bluetoothSerialPort.write("swipe_left");
+          }
+          println("window: ", channelWindow);
+        }
+        channelWindow.clear();
+      }
+    }
+    else if(activeNum == 2) {
+      // println("active num: ", 2);
+    }
+  }
+}
+
+int activeChannelCount() {
+  int count = 0;
+  for(int micNum = 0; micNum < MIC_NUM; micNum++) {
+    if(activeChannels[micNum] > -1) {
+      count = count + 1;
+    }
+  }
+  return count;
 }
 
 void getDataFromAudioInout(int channel){
@@ -149,6 +257,10 @@ void keyReleased()
     gain = gain + 5.0;
   } else if (key == '-' || key == '_') {
     gain = gain - 5.0;
+  }
+
+  if(key == '0') {
+    bluetoothSerialPort.write("up");0
   }
 }
  
@@ -193,6 +305,7 @@ void drawAveragePeak(int channel)
     // }
   }
   averageValue = (averageValue == 0) ? 0 : averageValue/activeNum;
+  averagePeaks[channel] = averageValue;
 
   pushStyle();
   textSize(26);
@@ -242,7 +355,7 @@ void drawPeakBars(int channel)
     if (peak_age[channel][i] < peak_hold_time) {
       ++peak_age[channel][i];
     } else {
-      peaks[channel][i] -= 1.0;
+      peaks[channel][i] -= 2.0;
       if (peaks[channel][i] < 0) { peaks[channel][i] = 0; }
     }
   }
